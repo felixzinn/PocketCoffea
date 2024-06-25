@@ -11,9 +11,27 @@ from pocket_coffea.law_tasks.utils import (
     load_run_options,
     process_datasets,
 )
+from pocket_coffea.utils import build_jets_calibrator
 
 # load contrib packages for law
 law.contrib.load("coffea")
+
+
+@luigi.util.inherits(baseconfig)
+class JetCalibration(law.Task):
+    def __init__(self, *args, **kwargs):
+        # initialize task and all parameters
+        super().__init__(*args, **kwargs)
+        self.config, _ = load_analysis_config(self.cfg, output_dir=self.output_dir)
+        self.factory_file = self.config.parameters.jets_calibration.factory_file
+        self.jets_calibration = self.config.parameters.jets_calibration
+
+    def output(self):
+        # output file for jets calibration as defined in parameters
+        return law.LocalFileTarget(self.factory_file)
+
+    def run(self):
+        build_jets_calibrator.build(self.jets_calibration)
 
 
 @luigi.util.inherits(baseconfig, runnerconfig)
@@ -27,7 +45,10 @@ class Runner(law.Task):
     processor_instance = None
 
     def requires(self):
-        return CreateDatasets.req(self)
+        return {
+            "datasets": CreateDatasets.req(self),
+            "jets_calibration": JetCalibration.req(self),
+        }
 
     @property
     def skip_output_removal(self):

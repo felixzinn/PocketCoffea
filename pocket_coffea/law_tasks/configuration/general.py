@@ -15,10 +15,6 @@ class baseconfig(luigi.Config):
         description="Output directory for the coffea processor and plots",
         default=os.path.join(os.getcwd(), "output"),
     )
-    test = luigi.BoolParameter(
-        description="Run with limit 1 interactively", default=False
-    )
-
 
 class datasetconfig(luigi.Config):
     """Paramters for dataset creation"""
@@ -77,6 +73,9 @@ class runnerconfig(luigi.Config):
     # parameters
     coffea_output = luigi.Parameter(
         description="Filename of the coffea output", default="output.coffea"
+    )
+    test = luigi.BoolParameter(
+        description="Run with limit 1 interactively", default=False
     )
     limit_files = luigi.IntParameter(description="Limit number of files", default=None)
     limit_chunks = luigi.IntParameter(
