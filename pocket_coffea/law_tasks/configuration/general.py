@@ -16,11 +16,13 @@ class baseconfig(luigi.Config):
         default=os.path.join(os.getcwd(), "output"),
     )
 
+
 class datasetconfig(luigi.Config):
     """Paramters for dataset creation"""
 
     dataset_definition = luigi.Parameter(
-        description="json file containing the datasets definitions",
+        description="json file containing the datasets definitions"
+            "(wildcard supported)",
         default=os.path.join(os.getcwd(), "datasets", "datasets_definitions.json"),
     )
     dataset_dir = luigi.Parameter(

@@ -22,7 +22,9 @@ class JetCalibration(law.Task):
     def __init__(self, *args, **kwargs):
         # initialize task and all parameters
         super().__init__(*args, **kwargs)
-        self.config, _ = load_analysis_config(self.cfg, output_dir=self.output_dir)
+        self.config, _ = load_analysis_config(
+            self.cfg, output_dir=self.output_dir, save=False
+        )
         self.factory_file = self.config.parameters.jets_calibration.factory_file
         self.jets_calibration = self.config.parameters.jets_calibration
 

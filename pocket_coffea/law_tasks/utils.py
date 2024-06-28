@@ -3,7 +3,9 @@
 import importlib
 import json
 import os
+import typing
 import warnings
+from collections import Counter
 from typing import Union
 
 import coffea
@@ -54,6 +56,31 @@ def read_datasets_definition(dataset_definition: FileName) -> dict:
         return json.load(f)
 
 
+def merge_datasets_definition(definition_files: list) -> dict[str, dict]:
+    """
+    Merge multiple dataset definition files into one.
+
+    :param definition_files: List of dataset definition files.
+    :type definition_files: list
+    :return: The merged dataset definition.
+    :rtype: dict
+
+    .. warning::
+        If duplicate keys are found in the datasets definition,
+        a warning will be raised.
+
+    """
+
+    datasets = [read_datasets_definition(file) for file in definition_files]
+
+    keys = [key for dataset in datasets for key in dataset]
+    duplicate_keys = {key: count for key, count in Counter(keys).items() if count > 1}
+    if duplicate_keys:
+        raise Warning(f"Duplicate keys found in datasets definition: {duplicate_keys}")
+
+    return {key: value for dataset in datasets for key, value in dataset.items()}
+
+
 def create_datasets_paths(
     datasets: dict, split_by_year: bool = False, output_dir: FileName = None
 ) -> list:
@@ -99,33 +126,45 @@ def create_datasets_paths(
 
 
 def modify_dataset_output_path(
-    dataset_definition: FileName, output_dir: FileName
-) -> FileName:
+    dataset_definition: Union[FileName, dict],
+    output_dir: FileName,
+    filename: str = None,
+) -> dict:
     """
     Modify the dataset definition file to include the full output path
     in the json output field.
 
-    :param dataset_definition: The path to the dataset definition file.
-    :type dataset_definition: str or os.PathLike
+    :param dataset_definition: The path to the dataset definition file or
+        the dataset definition as a dictionary.
+    :type dataset_definition: Union[FileName, dict]
     :param output_paths: The output directory.
     :type output_paths: str or os.PathLike
+    :param filename: The name of the output file. If provided, the modified
+        dataset definition will be saved with this filename in the output directory.
+        If not provided, the modified dataset definition will not be saved.
+        Default is None.
+    :type filename: str, optional
+    :return: The modified dataset definition as a dictionary.
+    :rtype: dict
     """
-    dataset_config = read_datasets_definition(dataset_definition)
+    if any(isinstance(dataset_definition, inst) for inst in typing.get_args(FileName)):
+        dataset_definition = read_datasets_definition(dataset_definition)
 
-    for dataset in dataset_config.values():
+    for dataset in dataset_definition.values():
         dataset["json_output"] = os.path.join(output_dir, dataset["json_output"])
 
-    output_file = os.path.join(
-        output_dir,
-        os.path.splitext(os.path.basename(dataset_definition))[0] + "_fullpaths.json",
-    )
-    with open(output_file, "w") as f:
-        json.dump(dataset_config, f, indent=4)
+    if filename is not None:
+        output_file = os.path.join(
+            output_dir,
+            filename,
+        )
+        with open(output_file, "w") as f:
+            json.dump(dataset_definition, f, indent=4)
 
-    return output_file
+    return dataset_definition
 
 
-def load_analysis_config(cfg: FileName, output_dir: FileName) -> tuple:
+def load_analysis_config(cfg: FileName, output_dir: FileName, save: bool=True) -> tuple:
     """
     Load the analysis config.
 
@@ -133,6 +172,9 @@ def load_analysis_config(cfg: FileName, output_dir: FileName) -> tuple:
     :type cfg: FileName
     :param output_dir: The output directory to save the configuration and parameters.
     :type output_dir: FileName
+    :param save: Flag indicating whether to save the configuration and parameters.
+        Default is True.
+    :type save: bool, optional
     :raises AttributeError: If the config file does not have the attribute `cfg`.
     :raises TypeError: If `cfg` is not of type Configurator (pocket_coffea).
     :return: A tuple containing the Configurator and run_options (if defined in config).
@@ -154,7 +196,9 @@ def load_analysis_config(cfg: FileName, output_dir: FileName) -> tuple:
             "`cfg` in config file is not of type Configurator."
             "Please check your configuration."
         )
-    config.save_config(output_dir)
+
+    if save:
+        config.save_config(output_dir)
 
     run_options = getattr(config_module, "run_options", {})
 
