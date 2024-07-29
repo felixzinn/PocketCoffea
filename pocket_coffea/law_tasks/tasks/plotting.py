@@ -41,7 +41,7 @@ class PlotterBase(BaseTask):
         )
         if self.blind:
             data_samples = load_sample_names(
-                os.path.join(self.output_dir, "config.json"), prefix="DATA"
+                inp["config"].path, prefix="DATA"
             )
             plotting_parameters = exclude_samples_from_plotting(
                 plotting_parameters, data_samples

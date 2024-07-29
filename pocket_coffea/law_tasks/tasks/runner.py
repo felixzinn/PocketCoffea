@@ -25,7 +25,7 @@ class JetCalibration(BaseTask):
     version = None
     # skip output removal if not interactively
     skip_output_removal = True
-    
+
     def __init__(self, *args, **kwargs):
         # initialize task and all parameters
         super().__init__(*args, **kwargs)
@@ -62,7 +62,8 @@ class Runner(BaseTask):
 
     def output(self):
         return {
-            key: self.local_file_target(filename) for key, filename in [
+            key: self.local_file_target(filename)
+            for key, filename in [
                 ("coffea", self.coffea_output),
                 ("parameters", "parameters_dump.yaml"),
                 ("config", "config.json"),
@@ -72,7 +73,8 @@ class Runner(BaseTask):
 
     def run(self):
         # create output folder if it does not exist
-        self.output()["coffea"].parent.touch()
+        output = self.output()["coffea"]
+        output.parent.touch()
 
         # load analysis configuration
         self.config, run_options = load_analysis_config(
@@ -88,15 +90,13 @@ class Runner(BaseTask):
             limit_chunks=self.limit_chunks,
         )
 
-        executor = get_executor(
-            self.executor, run_options, self.output()["coffea"].parent
-        )
+        executor = get_executor(self.executor, run_options, output.parent.path)
 
         process_datasets(
             coffea_executor=executor,
             config=self.config,
             run_options=run_options,
             processor_instance=self.config.processor_instance,
-            output_path=self.output()["coffea"].path,
+            output_path=output.path,
             process_separately=self.process_separately,
         )

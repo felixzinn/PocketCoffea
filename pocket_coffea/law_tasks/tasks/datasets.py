@@ -84,6 +84,8 @@ from pocket_coffea.utils.dataset import build_datasets
 @luigi.util.inherits(datasetconfig)
 class CreateDatasets(BaseTask):
     """Create dataset json files"""
+    # datasets are independent of the version
+    version = None
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
