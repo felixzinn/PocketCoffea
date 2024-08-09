@@ -1,5 +1,6 @@
 from ..weights import WeightWrapper, WeightLambda, WeightData, WeightDataMultiVariation
 import numpy as np
+import awkward as ak
 
 from pocket_coffea.lib.scale_factors import (
     sf_ele_reco,
