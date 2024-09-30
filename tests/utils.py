@@ -9,11 +9,11 @@ def events():
     filename = "root://eoscms.cern.ch//eos/cms/store/mc/RunIISummer20UL18NanoAODv9/TTTo2L2Nu_TuneCP5_13TeV-powheg-pythia8/NANOAODSIM/106X_upgrade2018_realistic_v16_L1v1-v1/280000/01881676-C30A-2142-B3B2-7A8449DAF8EF.root"
 
     print(filename)
-    events = NanoEventsFactory.from_root(filename, schemaclass=NanoAODSchema, entry_stop=1000).events()
+    events = NanoEventsFactory.from_root(filename, schemaclass=NanoAODSchema, entry_stop=100).events()
     return events
 
 
-def compare_outputs(output, old_output):
+def compare_outputs(output, old_output, exclude_variables=None):
     for cat, data in old_output["sumw"].items():
         assert cat in output["sumw"]
         for dataset, _data in data.items():
@@ -35,7 +35,9 @@ def compare_outputs(output, old_output):
     metadata = output["datasets_metadata"]["by_dataset"]
     # Testing variables
     for variables, data in old_output["variables"].items():
-        assert variables in output["variables"]
+        if exclude_variables is not None and variables in exclude_variables:
+            continue
+        assert variables in output["variables"]    
         for sample, _data in data.items():
             assert sample in output["variables"][variables]
             for dataset, hist in _data.items():

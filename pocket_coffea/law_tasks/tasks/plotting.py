@@ -6,6 +6,7 @@ from pocket_coffea.law_tasks.configuration.general import (
     plottingsystematicsconfig,
 )
 from pocket_coffea.law_tasks.tasks.base import BaseTask
+from pocket_coffea.law_tasks.tasks.base import BaseTask
 from pocket_coffea.law_tasks.tasks.runner import Runner
 from pocket_coffea.law_tasks.utils import (
     exclude_samples_from_plotting,
@@ -99,6 +100,7 @@ class Plotter(PlotterBase):
 class PlotSystematics(PlotterBase):
     """Plot the nominal, up and down shift of systematics"""
 
+    def output(self):
     def output(self):
         syst_str = "systematics_ratio" if self.ratio else "systematics"
         yscale_str = "log" if self.log_scale else "lin"
