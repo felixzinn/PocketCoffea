@@ -130,15 +130,16 @@ class CreateDatasets(BaseTask):
 
     def output(self):
         """json files for datasets"""
-        return [
-            law.LocalFileTarget(dataset)
-            for dataset in create_datasets_paths(
-                datasets=self.merged_datasets,
-                output_dir=self.merged_dataset_file.parent,
-                output_dir=self.merged_dataset_file.parent,
-                split_by_year=self.split_by_year,
-            )
-        ]
+        return {
+            "merged definition": law.LocalFileTarget(self.merged_dataset_file),
+            "json files": [
+                law.LocalFileTarget(dataset)
+                for dataset in create_datasets_paths(
+                    datasets=self.merged_datasets,
+                    split_by_year=self.split_by_year,
+                )
+            ],
+        }
 
     def run(self):
         # modify paths and save the definition in merged output file
