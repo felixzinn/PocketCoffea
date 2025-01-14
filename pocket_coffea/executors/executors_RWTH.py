@@ -72,7 +72,7 @@ class ParslCondorExecutorFactory(ExecutorFactoryABC):
                         provider=CondorProvider(
                             nodes_per_block=1,
                             cores_per_slot=self.run_options.get("cores-per-worker", 1),
-                            mem_per_slot=self.run_options.get("mem_per_worker_parsl", 2),
+                            mem_per_slot=self.run_options.get("mem_per_worker", 2),
                             init_blocks=self.run_options["scaleout"],
                             max_blocks=(self.run_options["scaleout"]) + 5,
                             worker_init="\n".join(self.get_worker_env()),
@@ -96,7 +96,7 @@ class ParslCondorExecutorFactory(ExecutorFactoryABC):
 
     def customized_args(self):
         args = super().customized_args()
-        # in the futures executor Nworkers == N scalout
+        # in the futures executor Nworkers == N scaleout
         #args["treereduction"] = self.run_options["tree-reduction"]
         return args
 
@@ -160,7 +160,7 @@ class DaskExecutorFactory(ExecutorFactoryABC):
             memory = self.run_options['mem-per-worker'],
             disk = self.run_options.get('disk-per-worker', "2GB"),
             job_script_prologue = self.get_worker_env(),
-            log_directory = os.path.join(self.outputdir, "dask_log"),
+            log_directory = "/tmp/"+getpass.getuser()+"/dask_log",
         )
         print(self.get_worker_env())
 
@@ -168,7 +168,7 @@ class DaskExecutorFactory(ExecutorFactoryABC):
         print(">> Sending out jobs")
         self.dask_cluster.adapt(minimum=1 if self.run_options["adaptive"]
                                 else self.run_options['scaleout'],
-                      maximum=self.run_options['scaleout'])
+                                maximum=self.run_options['scaleout'])
         
         self.dask_client = Client(self.dask_cluster)
         print(">> Waiting for the first job to start...")
@@ -186,7 +186,7 @@ class DaskExecutorFactory(ExecutorFactoryABC):
 
     def customized_args(self):
         args = super().customized_args()
-        # in the futures executor Nworkers == N scalout
+        # in the futures executor Nworkers == N scaleout
         args["client"] = self.dask_client
         args["treereduction"] = self.run_options["tree-reduction"]
         args["retries"] = self.run_options["retries"]
@@ -202,9 +202,9 @@ def get_executor_factory(executor_name, **kwargs):
         return IterativeExecutorFactory(**kwargs)
     elif executor_name == "futures":
         return FuturesExecutorFactory(**kwargs)
-    elif  executor_name == "parsl-condor":
+    elif  executor_name == "parsl":
         return ParslCondorExecutorFactory(**kwargs)
     elif  executor_name == "dask":
         return DaskExecutorFactory(**kwargs)
     else:
-        print("The executor is not recognized!\n available executors are: iterative, futures, parsl-condor, dask")
+        print("The executor is not recognized!\n available executors are: iterative, futures, parsl, dask")

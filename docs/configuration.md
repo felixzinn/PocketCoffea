@@ -308,6 +308,50 @@ In the configuration the categorization is split in:
 - **Categories**: Splitting of events for histograms and columns output.
 
 
+### Save skimmed NanoAOD
+PocketCoffea can dump events passing the skim selection to NanoAOD root files. This can be useful when your skimming
+efficiecy is high and you can trade the usage of some disk storage for higher processing speed. 
+
+The export of skimmed NanoAOD is activated by the `save_skimmed_files` argument of the `Configurator` object. If
+`save_skimmed_files!=None` then the processing stops after the skimming and one root file for each chunk is saved in the
+folder specified by the argument. 
+
+It is recommended to use a xrootd endpoint: `save_skimmed_files='root://eosuser.cern.ch:/eos/user/...`. 
+
+```python
+cfg = Configurator(
+     
+    workflow = ttHbbBaseProcessor,
+    workflow_options = {},
+    
+    save_skimmed_files = "root://eosuser.cern.ch://eos/user/x/xxx/skimmed_samples/Run2UL/",
+    skim = [get_nPVgood(1),
+            eventFlags,
+            goldenJson,
+            get_nBtagMin(3, minpt=15., coll="Jet", wp="M"),
+            get_HLTsel(primaryDatasets=["SingleEle", "SingleMuon"])],
+    )
+
+```
+
+The PocketCoffea output file contains the list of skimmed files with the number of skimmed events in each file. Moreover
+the root files contain a new branch called `skimRescaleGenWeight` which store for each event the scaling factor
+needed to recover the sum of genWeight of the original factor, and correct for the skimming efficiency.  The factor
+is computed as `(original sum of genweight / sum of genweights of skimmed files)` for each file. This factor needs to
+be multiplied to the sum of genweights accumulated in each chunk by the processor that runs on top of skimmed
+datasets. Therefore the dataset definition file for skimmed datasets must contain the `isSkim:True` metadata,
+which is used by the processor to apply the rescaling.
+
+:::{alert}
+**N.B.**: The skim is performed before the object calibration and preselection step. The analyzer must be careful to
+apply a loose enough skim that is invariant under the shape uncertainties applied later in the analysis. For example
+the selection on the minimum number of jets should be loose enought to not be affected by Jet energy scales, **which
+are applied later**. 
+:::
+
+A full tutorial of the necessar steps to produce a skim and then to use the pocketcoffea tools to prepare a new dataset
+configuration file can be found in the [How To section](./recipes.md#skimming-events).
+
 ### Categorization utilities
 PocketCoffea defines different ways to categorize events. 
 The code is available at [pocket_coffea.lib.categorization](pocket_coffea.lib.categorization).
@@ -660,6 +704,33 @@ cfg = Configurator(
     },
     ...
 )
+
+```
+
+The `HistConf` class has many options, particularly useful to exclude some categories or samples from a specific
+histogram. 
+
+```python
+
+@dataclass
+class HistConf:
+    axes: List[Axis]
+    storage: str = "weight"
+    autofill: bool = True  # Handle the filling automatically
+    variations: bool = True
+    only_variations: List[str] = None
+    exclude_samples: List[str] = None
+    only_samples: List[str] = None
+    exclude_categories: List[str] = None
+    only_categories: List[str] = None
+    no_weights: bool = False  # Do not fill the weights
+    metadata_hist: bool = False  # Non-event variables, for processing metadata
+    hist_obj = None
+    collapse_2D_masks = False  # if 2D masks are applied on the events
+    # and the data_ndim=1, when collapse_2D_mask=True the OR
+    # of the masks on the axis=2 is performed to get the mask
+    # on axis=1, otherwise an exception is raised
+    collapse_2D_masks_mode = "OR"  # Use OR or AND to collapse 2D masks for data_ndim=1 if collapse_2D_masks == True
 
 ```
 
