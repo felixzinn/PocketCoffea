@@ -1842,7 +1842,7 @@ class SystUnc:
                 loc="upper right",
             )
 
-    def plot(self, ratio=True, toplabel=None, log=False):
+    def plot(self, ratio=True, toplabel=None, log_x=False, log_y=False):
         """Plots the nominal, up and down systematic variations on the same plot."""
 
         # setup figure and corresponding axes
