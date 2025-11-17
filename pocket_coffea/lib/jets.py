@@ -4,8 +4,8 @@ import awkward as ak
 import numpy as np
 import correctionlib
 from coffea.jetmet_tools import  CorrectedMETFactory
-from ..lib.deltaR_matching import get_matching_pairs_indices, object_matching
 from correctionlib.schemav2 import Correction, CorrectionSet
+from ..utils.utils import get_nano_version, replace_at_indices
 
 
 def add_jec_variables(jets, event_rho, isMC=True):
@@ -17,6 +17,13 @@ def add_jec_variables(jets, event_rho, isMC=True):
             jets["pt_gen"] = ak.values_astype(ak.fill_none(jets.matched_gen.pt, 0), np.float32)
         except AttributeError:
             jets["pt_gen"] = ak.zeros_like(jets.pt, dtype=np.float32)
+    return jets
+
+def add_jec_variables_subjet(jets, event_rho, isMC=True):
+    jets["pt_raw"] = (1 - jets.rawFactor) * jets.pt
+    jets["mass_raw"] = (1 - jets.rawFactor) * jets.mass
+    jets["event_rho"] = ak.broadcast_arrays(event_rho, jets.pt)[0]
+
     return jets
 
 
@@ -70,23 +77,19 @@ def met_xy_correction(params, events, METcol,  year, era):
 
 
 def jet_selection(events, jet_type, params, year, leptons_collection="", jet_tagger=""):
-
     jets = events[jet_type]
     cuts = params.object_preselection[jet_type]
 
-    # For 2024 no jetId key in Nano anymore. 
-    # For nanoV12 (i.e. 22/23), jet Id is also buggy, should therefore be rederived... To be done
-    # See https://twiki.cern.ch/twiki/bin/viewauth/CMS/JetID13p6TeV#nanoAOD_Flags
-    jetIdCut = True
-    if "jetId" in jets.fields:
-        jetIdCut = (jets.jetId >= cuts["jetId"])
-    else: print("No JetID cut applied, since key jetId missing in jet collections")
+    # For nanoV15 no jetId key in Nano anymore. 
+    # For nanoV12 (i.e. 22/23), jet Id is also buggy, should therefore be rederived
+    # in the following, if nano_version not explicitly specified in params, v9 is assumed for Run2UL, v12 for 22/23 and v15 for 2024
+    jets["jetId_corrected"] = compute_jetId(events, jet_type, params, year)
 
     # Mask for  jets not passing the preselection
     mask_presel = (
         (jets.pt > cuts["pt"])
         & (np.abs(jets.eta) < cuts["eta"])
-        & jetIdCut
+        & (jets.jetId_corrected >= cuts["jetId"])
     )
     # Lepton cleaning
     # Only jets that are more distant than dr to ALL leptons are tagged as good jets
@@ -153,97 +156,98 @@ def jet_selection(events, jet_type, params, year, leptons_collection="", jet_tag
 
     return jets[mask_good_jets], mask_good_jets
 
-
-def jet_selection_nanoaodv12(events, jet_type, params, year, leptons_collection="", jet_tagger=""):
-
+def compute_jetId(events, jet_type, params, year):
+    """
+    Add (or recompute) jet ID to the jets object based on the NanoAOD version.
+    Inspired by https://gitlab.cern.ch/cms-analysis/general/HiggsDNA/-/blob/master/higgs_dna/tools/jetID.py
+    """
     jets = events[jet_type]
-    cuts = params.object_preselection[jet_type]
+    # Get the nano version from events metadata or from default parameters
+    nano_version = get_nano_version(events, params, year)
+    abs_eta = abs(jets.eta)
+    # Return the existing jetId for NanoAOD versions below 12
+    if nano_version < 12:
+        return jets.jetId
 
-    # Bug fix for NanoAOD v12 https://gitlab.cern.ch/cms-jetmet/coordination/coordination/-/issues/117
-    
-    mask_presel = (
-        (jets.pt > cuts["pt"])
-        & (np.abs(jets.eta) < cuts["eta"])
-    )
-        
-    if cuts["jetId"] == 6:
-        passJetIdTight = ak.zeros_like(jets.pt, dtype=bool)
-        passJetIdTightLepVeto = ak.zeros_like(jets.pt, dtype=bool)
-        
-        passJetIdTight = ak.where((np.abs(jets.eta) <= 2.7), (jets.jetId & (1 << 1))>0, passJetIdTight)
-        passJetIdTight = ak.where((np.abs(jets.eta) > 2.7) & (np.abs(jets.eta) <= 3.0), ((jets.jetId & (1 << 1))>0 & (jets.neHEF < 0.99)), passJetIdTight)
-        passJetIdTight = ak.where((np.abs(jets.eta) > 3.0), ((jets.jetId & (1 << 1))>0 & (jets.neEmEF < 0.4)), passJetIdTight)
-        passJetIdTightLepVeto = ak.where((np.abs(jets.eta) <= 2.7), (passJetIdTight & (jets.muEF < 0.8) & (jets.chEmEF < 0.8)),passJetIdTight)
-    
-    # Only jets that are more distant than dr to ALL leptons are tagged as good jets
-    # Mask for  jets not passing the preselection
-    
-    # Lepton cleaning
-    if leptons_collection != "":
-        dR_jets_lep = jets.metric_table(events[leptons_collection])
-        mask_lepton_cleaning = ak.prod(dR_jets_lep > cuts["dr_lepton"], axis=2) == 1
-    else:
-        mask_lepton_cleaning = True
-
-    if jet_type == "Jet":
-        # Selection on PUid. Only available in Run2 UL, thus we need to determine which sample we run over;
-        if year in ['2016_PreVFP', '2016_PostVFP','2017','2018']:
-            mask_jetpuid = (jets.puId >= params.jet_scale_factors.jet_puId[year]["working_point"][cuts["puId"]["wp"]]) | (
-                jets.pt >= cuts["puId"]["maxpt"]
+    # For NanoAOD version 12 and above, we recompute the jet ID criteria
+    # https://twiki.cern.ch/twiki/bin/viewauth/CMS/JetID13p6TeV
+    elif nano_version == 12:
+        if jet_type == "Jet":
+            # Default tight
+            passJetIdTight = ak.where(
+                abs_eta <= 2.7,
+                (jets.jetId & (1 << 1)) > 0,  # Tight criteria for abs_eta <= 2.7
+                ak.where(
+                    (abs_eta > 2.7) & (abs_eta <= 3.0),
+                    ((jets.jetId & (1 << 1)) > 0) & (jets.neHEF < 0.99),  # Tight criteria for 2.7 < abs_eta <= 3.0
+                    ((jets.jetId & (1 << 1)) > 0) & (jets.neEmEF < 0.4)  # Tight criteria for 3.0 < abs_eta
+                )
             )
+            # Default tight lepton veto
+            passJetIdTightLepVeto = ak.where(
+                abs_eta <= 2.7,
+                passJetIdTight & (jets.muEF < 0.8) & (jets.chEmEF < 0.8),  # add lepton veto for abs_eta <= 2.7
+                passJetIdTight  # No lepton veto for 2.7 < abs_eta
+            )
+            return (passJetIdTight * (1 << 1)) | (passJetIdTightLepVeto * (1 << 2))
+
+        elif jet_type == "FatJet":
+            # For nanoAOD v12, only using the original branch in the tracker acceptance
+            passJetIdTight = ak.where(
+                abs_eta <= 2.7,
+                (jets.jetId & (1 << 1)) > 0,  # Tight criteria for abs_eta <= 2.7
+                ak.zeros_like(jets.jetId) 
+                )
+            # Not tight lepveto for FatJet
+            return (passJetIdTight * (1 << 1)) 
         else:
-            mask_jetpuid = True        
-        
-        if cuts["jetId"] == 6:
-            mask_good_jets = mask_presel & mask_lepton_cleaning & mask_jetpuid & passJetIdTightLepVeto
-        else:
-            mask_good_jets = mask_presel & mask_lepton_cleaning & mask_jetpuid 
+            raise ValueError(f"Jet type {jet_type} not recognized for JetID")
 
-        if jet_tagger != "":
-            if "PNet" in jet_tagger:
-                B   = "btagPNetB"
-                CvL = "btagPNetCvL"
-                CvB = "btagPNetCvB"
-            elif "DeepFlav" in jet_tagger:
-                B   = "btagDeepFlavB"
-                CvL = "btagDeepFlavCvL"
-                CvB = "btagDeepFlavCvB"
-            elif "RobustParT" in jet_tagger:
-                B   = "btagRobustParTAK4B"
-                CvL = "btagRobustParTAK4CvL"
-                CvB = "btagRobustParTAK4CvB"
-            else:
-                raise NotImplementedError(f"This tagger is not implemented: {jet_tagger}")
-            
-            if B not in jets.fields or CvL not in jets.fields or CvB not in jets.fields:
-                raise NotImplementedError(f"{B}, {CvL}, and/or {CvB} are not available in the input.")
 
-            jets["btagB"] = jets[B]
-            jets["btagCvL"] = jets[CvL]
-            jets["btagCvB"] = jets[CvB]
+    elif nano_version >= 15:
+        # Example code: https://gitlab.cern.ch/cms-nanoAOD/jsonpog-integration/-/blob/master/examples/jetidExample.py?ref_type=heads
+        # Load CorrectionSet
+        jsonFile = params.jet_scale_factors.jet_id[year]
+        cset = correctionlib.CorrectionSet.from_file(jsonFile)
 
-    elif jet_type == "FatJet":
-        # Apply the msd and preselection cuts
-        mask_msd = events.FatJet.msoftdrop > cuts["msd"]
-        mask_good_jets = mask_presel & mask_msd
+        counts = ak.num(jets)
+        jets = ak.flatten(jets, axis=1)
 
-        if jet_tagger != "":
-            if "PNetMD" in jet_tagger:
-                BB   = "particleNet_XbbVsQCD"
-                CC   = "particleNet_XccVsQCD"
-            elif "PNet" in jet_tagger:
-                BB   = "particleNetWithMass_HbbvsQCD"
-                CC   = "particleNetWithMass_HccvsQCD"
-            else:
-                raise NotImplementedError(f"This tagger is not implemented: {jet_tagger}")
-            
-            if BB not in jets.fields or CC not in jets.fields:
-                raise NotImplementedError(f"{BB} and/or {CC} are not available in the input.")
+        eval_dict = {
+            "eta": jets.eta,
+            "chHEF": jets.chHEF,
+            "neHEF": jets.neHEF,
+            "chEmEF": jets.chEmEF,
+            "neEmEF": jets.neEmEF,
+            "muEF": jets.muEF,
+            "chMultiplicity": jets.chMultiplicity,
+            "neMultiplicity": jets.neMultiplicity,
+            "multiplicity": jets.chMultiplicity + jets.neMultiplicity
+        }
 
-            jets["btagBB"] = jets[BB]
-            jets["btagCC"] = jets[CC]
+        ## Default tight for NanoAOD version 13 and above
+        jet_algo_mapping = params.jets_calibration.collection[year]
+        jet_algo = next((k for k, v in jet_algo_mapping.items() if v == jet_type), None)
+        if jet_algo==None:
+            raise Exception(f"No mapping jet_type ({jet_type}) -> jet_algo (e.g. AK4PFPuppi) defined for year {year}")
+        jet_algo = jet_algo.replace("PF", "").upper()
+    
+        if jet_algo+"_Tight" not in list(cset.keys()):
+            raise Exception(f"No correction for jet collection {jet_algo} defined in correctionlib file {jsonFile}")
+        idTight = cset[jet_algo+"_Tight"]
+        inputsTight = [eval_dict[input.name] for input in idTight.inputs]
+        idTight_value = idTight.evaluate(*inputsTight) * 2  # equivalent to bit2
 
-    return jets[mask_good_jets], mask_good_jets
+        # Default tight lepton veto
+        idTightLepVeto = cset[jet_algo+"_TightLeptonVeto"]
+        inputsTightLepVeto = [eval_dict[input.name] for input in idTightLepVeto.inputs]
+        idTightLepVeto_value = idTightLepVeto.evaluate(*inputsTightLepVeto) * 4  # equivalent to bit3
+
+        # Default jet ID
+        id_value = idTight_value + idTightLepVeto_value
+
+        return ak.unflatten(id_value, counts)
+
 
 def btagging(Jet, btag, wp, veto=False):
     if veto:
@@ -596,4 +600,250 @@ def jet_correction_corrlib(
             jets[f"mass_JES_{jes_vari}_up"] = jets.mass * corr_up_variation
             jets[f"mass_JES_{jes_vari}_down"] = jets.mass * corr_down_variation
     jets_jagged = ak.unflatten(jets, counts)
+    return jets_jagged
+
+
+
+
+def msoftdrop_correction(
+    calib_params,
+    variations,
+    events,
+    subjet_type,
+    jet_coll_name,
+    chunk_metadata,
+    jec_syst=True,
+):
+    """Apply softdrop mass correction to large-radius jets (FatJet) using correctionlib.
+    The correction consists in applying AK4 jet corrections to the subjets of the large-radius jets.
+    The corrected softdrop mass is computed as the invariant mass of the two corrected subjets.
+    Only the JES correction and variations are applied, while the JER correction is not applied to the subjets."""
+
+    assert jet_coll_name in ["FatJet"], f"{jet_coll_name} collection cannot be calibrated. The softdrop mass correction can be applied only on large-radius jets."
+    assert subjet_type in ["AK4PFchs", "AK4PFPuppi"], f"{subjet_type} subjet type cannot be calibrated. The subjets can be calibrated only using corrections of type AK4PFchs or AK4PFPuppi."
+    isMC = chunk_metadata["isMC"]
+    year = chunk_metadata["year"]
+    era = chunk_metadata["era"]
+
+    json_path = calib_params["json_path"]
+    if isMC:
+        jec_tag = calib_params['jec_mc'] 
+    else:
+        if type(calib_params['jec_data'])==str:
+            jec_tag = calib_params['jec_data']
+        else:
+            jec_tag = calib_params['jec_data'][chunk_metadata["era"]]
+    
+    level = calib_params['level']  # e.g. 'L1L2L3' for MC, 'L1L2L3Residual' for data
+
+    # no jer and variations applied on data
+    apply_jes = True
+    jes_syst = False
+    if isMC:
+        if jec_syst:
+            jes_syst = True
+
+    tag_jec = "_".join([jec_tag, level, subjet_type])
+
+    # get the correction sets
+    cset = correctionlib.CorrectionSet.from_file(json_path)
+
+    # prepare inputs
+    jets_jagged = events[jet_coll_name]
+    counts = ak.num(jets_jagged)
+
+    # Create new branch for jets to store the event and run number
+    jets_jagged["event_id"] = ak.ones_like(jets_jagged.pt) * events.event
+    jets_jagged["run_nr"] = ak.ones_like(jets_jagged.pt) * events.run
+
+    if year in ['2016_PreVFP', '2016_PostVFP','2017','2018']:
+        rho = events.fixedGridRhoFastjetAll
+    else:
+        rho = events.Rho.fixedGridRhoFastjetAll
+    
+    jets_jagged["rho"] = ak.ones_like(jets_jagged.pt) * rho
+
+    # Early return if no jets in any event
+    if ak.sum(counts) == 0:
+        return jets_jagged
+    
+    # Create mask for events that have jets
+    events_have_jets = counts > 0
+    
+    # Only process events that have jets
+    if not ak.any(events_have_jets):
+        return jets_jagged
+    
+    # Check which jets have subjets and msoftdrop > 0: this are the only jets that will be corrected
+    has_subjets_per_jet = (ak.count(jets_jagged.subjets.pt, axis=-1) > 0) & (jets_jagged.msoftdrop > 0)
+
+    # Check which events have at least one jet with subjets
+    events_have_jets_with_subjets = ak.any(has_subjets_per_jet, axis=1) & events_have_jets
+    
+    if not ak.any(events_have_jets_with_subjets):
+        return jets_jagged
+    
+    # Only process subjets from jets that actually have them
+    # Use ak.mask to filter out jets without subjets, avoiding None values
+    jets_with_subjets = ak.mask(jets_jagged, has_subjets_per_jet)
+    
+    # Get only the valid (non-None) jets for processing
+    valid_jets = jets_with_subjets[~ak.is_none(jets_with_subjets, axis=1)]
+    valid_indices = ak.local_index(jets_with_subjets, axis=1)[~ak.is_none(jets_with_subjets, axis=1)]
+
+    # Only proceed if there are valid jets with subjets
+    if ak.sum(ak.num(valid_jets)) == 0:
+        return jets_jagged
+    
+    # flatten jet collection (only jets with subjets)
+    jets_flat = ak.flatten(valid_jets)
+    counts_valid = ak.num(valid_jets)
+    
+    # get subjets from valid jets only
+    subjets_jagged = jets_flat.subjets
+    # mask None subjets (in case some jets have no subjets)
+    subjets_jagged = subjets_jagged[~ak.is_none(subjets_jagged, axis=1)]
+    # get counts before flattening subjets
+    counts_subjet = ak.num(subjets_jagged)
+
+    # Create new branches for subjets to store the event and run number and the event rho
+    # and broadcast event variables to subjets
+    event_variables = ["event_id", "run_nr", "rho"]
+    for var in event_variables:
+        if var in jets_flat.fields:
+            subjets_jagged[var] = ak.ones_like(subjets_jagged.pt) * jets_flat[var]
+
+    subjets_jagged = add_jec_variables_subjet(subjets_jagged, subjets_jagged["rho"], isMC)
+
+    # flatten subjet collection
+    subjets = ak.flatten(subjets_jagged)
+
+    # evaluate dictionary
+    # The jet area is needed only for L1 corrections, but for PUPPI jets this correction is not derived
+    # It is safe to apply L1L2L3 corrections by passing an average area of 0.5 (= π × 0.4 × 0.4) for all jets as input.
+    eval_dict = {
+        "JetPt": subjets.pt_raw,
+        "JetEta": subjets.eta,
+        "JetPhi": subjets.phi,
+        "Rho": subjets.event_rho,
+        "JetA": 0.5 * ak.ones_like(subjets.pt_raw), # Get "dummy" area for subjets
+        "run": subjets.run_nr
+    }
+
+    # jes central
+    if apply_jes:
+        # get the correction
+        if tag_jec in list(cset.compound.keys()):
+            sf = cset.compound[tag_jec]
+        elif tag_jec in list(cset.keys()):
+            sf = cset[tag_jec]
+        else:
+            print(tag_jec, list(cset.keys()), list(cset.compound.keys()))
+            raise Exception(f"[No JEC correction: {tag_jec} - Year: {year} - Era: {era} - Level: {level}")
+        inputs = [eval_dict[input.name] for input in sf.inputs]
+        sf_value = sf.evaluate(*inputs)
+        # update the nominal pt and mass
+        subjets["pt"] = sf_value * subjets["pt_raw"]
+        subjets["mass"] = sf_value * subjets["mass_raw"]
+
+    # jes systematics
+    if jes_syst:
+        # update evaluate dictionary
+        eval_dict.update({"JetPt": subjets.pt})
+        # loop over all JES variations
+        jes_strings = [s[4:] for s in variations if s.startswith("JES")]
+        for jes_vari in jes_strings:
+            # If Regrouped variations are wanted, the Regrouped_ name must be used in the config
+            tag_jec_syst = "_".join([jec_tag, jes_vari, subjet_type])
+            try:
+                sf = cset[tag_jec_syst]
+            except:
+                raise Exception(
+                    f"[ jerc_jet ] No JEC systematic: {tag_jec_syst} - Year: {year} - Era: {era}"
+                )
+            # systematics
+            inputs = [eval_dict[input.name] for input in sf.inputs]
+            sf_delta = sf.evaluate(*inputs)
+
+            # divide by correction since it is already applied before
+            corr_up_variation = 1 + sf_delta
+            corr_down_variation = 1 - sf_delta
+
+            subjets[f"pt_JES_{jes_vari}_up"] = subjets.pt * corr_up_variation
+            subjets[f"pt_JES_{jes_vari}_down"] = subjets.pt * corr_down_variation
+            subjets[f"mass_JES_{jes_vari}_up"] = subjets.mass * corr_up_variation
+            subjets[f"mass_JES_{jes_vari}_down"] = subjets.mass * corr_down_variation
+    
+    # Reconstruct subjets back to jagged array
+    subjets_jagged_corrected = ak.unflatten(subjets, counts_subjet)
+    
+    # Compute corrected softdrop mass from corrected subjets
+    # This has the shape of valid_jets (jets with subjets)
+    corrected_msoftdrop_for_valid_jets = subjets_jagged_corrected.sum(axis=-1).mass
+    
+    # Unflatten corrected msoftdrop to match the valid_jets structure
+    corrected_msoftdrop_for_valid_jets = ak.unflatten(corrected_msoftdrop_for_valid_jets, counts_valid)
+    
+    # Now we need to map this back to the original jets_jagged structure
+    # Create a masked array with the same structure as jets_jagged but with corrected values
+    # where jets have subjets, and None elsewhere
+    corrected_msoftdrop_masked = ak.copy(jets_with_subjets.msoftdrop)  # This has None for jets without subjets
+
+    corrected_msoftdrop_masked = replace_at_indices(
+        ak.Array(corrected_msoftdrop_masked, behavior={}),
+        ak.Array(valid_indices, behavior={}),
+        ak.Array(corrected_msoftdrop_for_valid_jets, behavior={}),
+        array_builder=ak.ArrayBuilder()
+    ).snapshot()
+    
+    # Finally, use ak.where to replace None values in the corrected softdrop mass with the original msoftdrop values
+    # None values happen when the msoftdrop mass = -1 in the NanoAOD
+    # nan values also need to be removed
+    new_msoftdrop = ak.where(
+        ak.is_none(corrected_msoftdrop_masked, axis=-1),
+        jets_jagged.msoftdrop,
+        corrected_msoftdrop_masked
+    )
+    new_msoftdrop = ak.where(
+        np.isnan(new_msoftdrop),
+        jets_jagged.msoftdrop,
+        new_msoftdrop
+    )
+    jets_jagged["msoftdrop"] = new_msoftdrop
+
+    # N.B.: to be tested yet: JES variations on msoftdrop
+    #if jes_syst:
+    #    for jes_vari in jes_strings:
+    #        for shift in ["up", "down"]:
+    #            subjets_jagged_corrected_varied = ak.zip({
+    #                "pt": subjets_jagged_corrected[f"pt_JES_{jes_vari}_{shift}"],
+    #                "mass": subjets_jagged_corrected[f"mass_JES_{jes_vari}_{shift}"],
+    #                "eta": subjets_jagged_corrected.eta,
+    #                "phi": subjets_jagged_corrected.phi,
+    #                "charge": ak.zeros_like(subjets_jagged_corrected.pt)
+    #            }, with_name="PtEtaPhiMCandidate")
+    #            corrected_msoftdrop_for_valid_jets = subjets_jagged_corrected_varied.sum(axis=-1).mass
+    #            corrected_msoftdrop_for_valid_jets = ak.unflatten(corrected_msoftdrop_for_valid_jets, counts_valid)                
+    #            corrected_msoftdrop_masked = ak.copy(jets_with_subjets.msoftdrop)  # This has None for jets without subjets
+    #            corrected_msoftdrop_masked = replace_at_indices(
+    #                ak.Array(corrected_msoftdrop_masked, behavior={}),
+    #                ak.Array(valid_indices, behavior={}),
+    #                ak.Array(corrected_msoftdrop_for_valid_jets, behavior={})
+    #            ).snapshot()
+    #            
+    #            # Finally, use ak.where to replace None values in the corrected softdrop mass with the original msoftdrop values
+    #            # None values happen when the msoftdrop mass = -1 in the NanoAOD
+    #            # nan values also need to be removed
+    #            new_msoftdrop = ak.where(
+    #                ak.is_none(corrected_msoftdrop_masked, axis=-1),
+    #                jets_jagged.msoftdrop,
+    #                corrected_msoftdrop_masked
+    #            )
+    #            new_msoftdrop = ak.where(
+    #                np.isnan(new_msoftdrop),
+    #                jets_jagged.msoftdrop,
+    #                new_msoftdrop
+    #            )
+    #            jets_jagged[f"msoftdrop_JES_{jes_vari}_{shift}"] = new_msoftdrop
+
     return jets_jagged
