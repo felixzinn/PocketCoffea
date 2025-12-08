@@ -9,7 +9,7 @@ from coffea import processor
 from coffea.processor import Runner
 from coffea.nanoevents import NanoAODSchema
 from coffea.util import load, save
-from utils import compare_outputs, compare_totalweight
+from tests.utils import compare_outputs, compare_totalweight
 import numpy as np
 import awkward as ak
 import hist
@@ -92,7 +92,7 @@ def test_custom_weights(base_path: Path, monkeypatch: pytest.MonkeyPatch, tmp_pa
     assert output is not None
 
     # Check the output
-    assert np.isclose(output["sumw"]["2jets_B"]["TTTo2L2Nu_2018"]["TTTo2L2Nu"]/output["sumw"]["2jets"]["TTTo2L2Nu_2018"]["TTTo2L2Nu"], 2.0)
+    assert np.isclose(output["sumw"]["2jets_B"]["TTTo2L2Nu_2018"]["TTTo2L2Nu"]["nominal"]/output["sumw"]["2jets"]["TTTo2L2Nu_2018"]["TTTo2L2Nu"]["nominal"], 2.0)
     
     H = output["variables"]["nJetGood"]["TTTo2L2Nu"]["TTTo2L2Nu_2018"]
     assert np.isclose(H[{"cat":"2jets_B", "variation":"nominal"}].values().sum()/ H[{"cat":"2jets", "variation":"nominal"}].values().sum(), 2.0)
@@ -541,7 +541,7 @@ def test_columns_export(base_path: Path, monkeypatch: pytest.MonkeyPatch, tmp_pa
     save(output, outputdir / "output_all.coffea")
     
     assert output is not None
-    cls = output["columns"]["TTTo2L2Nu__mu"]["TTTo2L2Nu_2018"]["4jets"]
+    cls = output["columns"]["TTTo2L2Nu__mu"]["TTTo2L2Nu_2018"]["4jets"]["nominal"]
     assert np.all(cls["JetGood_N"].value >= 4)
 
 def test_columns_export_parquet(base_path: Path, monkeypatch: pytest.MonkeyPatch, tmp_path_factory):
@@ -580,7 +580,7 @@ def test_columns_export_parquet(base_path: Path, monkeypatch: pytest.MonkeyPatch
     ak.to_parquet_dataset("./columns/TTTo2L2Nu_2018/mu/4jets")
     ak.to_parquet_dataset("./columns/DATA_SingleMuon_2018_EraA/2btag")
     # load the parquet dataset
-    dataset = ak.from_parquet("./columns/TTTo2L2Nu_2018/mu/4jets")
+    dataset = ak.from_parquet("./columns/TTTo2L2Nu_2018/mu/4jets/nominal")
     assert dataset is not None
     
     assert "JetGood_pt" in dataset.fields
