@@ -23,17 +23,19 @@ def register_configuration_dir(key: str, directory: str):
 register_configuration_dir("default_params_dir", os.path.dirname(os.path.abspath(__file__)))
 OmegaConf.register_new_resolver("pico_to_femto", lambda x: float(x)/1000.)
 
-def setup_cvmfs_resolver(groups_tags: dict = None):
+def setup_cvmfs_resolver(groups_tags: dict = None, validate: bool = False):
     """
     Setup the CVMFS path resolver to point to the correct version of the POGs files
     If groups_tags is None the latest version is used. Otherwise a dictionary with the group names
     and the corresponding tags for each period must be provided.
     """
     basepath = Path("/cvmfs/cms-griddata.cern.ch/cat/metadata/")
-    valid_groups = [ n.name for n in basepath.iterdir() if n.is_dir()]
     pogpath = Path("/cvmfs/cms-griddata.cern.ch/cat/metadata/EGM")
-    # All the groups must share the same valid periods
-    valid_periods = [ n.name for n in pogpath.iterdir() if n.is_dir()]
+    
+    if validate:
+        valid_groups = [ n.name for n in basepath.iterdir() if n.is_dir()]
+        # All the groups must share the same valid periods
+        valid_periods = [ n.name for n in pogpath.iterdir() if n.is_dir()]
     
     # Register the resolver
     def cvmfs_path_resolver(period: str, group: str, file: str, tag=None) -> str:
@@ -51,9 +53,9 @@ def setup_cvmfs_resolver(groups_tags: dict = None):
             ...
         }
         '''
-        if group not in valid_groups:
+        if validate and group not in valid_groups:
             raise ValueError(f"Invalid group '{group}' for period '{period}' file '{file}'. Valid groups are: {valid_groups}")
-        if period not in valid_periods:
+        if validate and period not in valid_periods:
             raise ValueError(f"Invalid period '{period}' for group '{group}' file '{file}'. Valid periods are: {valid_periods}")
         
         if tag is not None:
@@ -65,7 +67,7 @@ def setup_cvmfs_resolver(groups_tags: dict = None):
        
         filepath = f"/cvmfs/cms-griddata.cern.ch/cat/metadata/{group}/{period}/{tag}/{file}"
         # Check if the file exists
-        if not os.path.exists(filepath):
+        if validate and not os.path.exists(filepath):
             raise FileNotFoundError(f"File '{filepath}' not found on CVMFS.")
         return filepath
     

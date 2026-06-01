@@ -13,15 +13,16 @@ from typing import Union
 import coffea
 import law
 from coffea.nanoevents import BaseSchema, NanoAODSchema
-from coffea.processor import accumulate
 from coffea.processor import Runner as CoffeaRunner
 from coffea.processor.executor import ExecutorBase
 from omegaconf import OmegaConf
 
 from pocket_coffea.executors import executors_base
 from pocket_coffea.parameters import defaults as parameters_utils
+from pocket_coffea.scripts.merge_outputs import merge_outputs
 from pocket_coffea.utils import utils as pocket_utils
 from pocket_coffea.utils.configurator import Configurator
+from pocket_coffea.utils.run import get_runner
 
 # Type aliases
 FileName = Union[str, os.PathLike]
@@ -313,6 +314,7 @@ def load_run_options(
         run_options["limit-chunks"] = limit_chunks
     if limit_files is not None:
         run_options["limit-files"] = limit_files
+        config.filter_dataset(run_options["limit-files"])
 
     if test:
         run_options["limit-files"] = limit_files if limit_files is not None else 1
@@ -371,21 +373,27 @@ def process_datasets(
     file_format: str = "root",
 ):
     if process_separately:
-        # raise NotImplementedError(
-        #     "separate processing for each dataset is not yet implemented"
-        # )
-        outputs = []
+        head, tail = os.path.split(output_path)
+        split_output = os.path.join(head, "separate_output")
+        os.makedirs(split_output, exist_ok=True)
+
+        output_files = []
         for sample, files in config.filesets.items():
+            file_path = os.path.join(split_output, f"{sample}_{tail}")
+            output_files.append(file_path)
+            if os.path.exists(file_path):
+                continue
             # If the number of available workers exceeds the maximum number of workers
             # for a given sample, the chunksize is reduced so that all the workers are
             # used to process the given sample
             n_events_tot = int(files["metadata"]["nevents"])
             n_workers_max = n_events_tot / run_options["chunksize"]
 
-            if run_options["scaleout"] > n_workers_max:
-                adapted_chunksize = n_events_tot // run_options["scaleout"]
-            else:
-                adapted_chunksize = run_options["chunksize"]
+            # if run_options["scaleout"] > n_workers_max:
+            #     adapted_chunksize = n_events_tot // run_options["scaleout"]
+            # else:
+            #     adapted_chunksize = run_options["chunksize"]
+            adapted_chunksize = run_options["chunksize"]
 
             fileset = {sample: files}
 
@@ -402,16 +410,20 @@ def process_datasets(
             output = run(
                 fileset, treename="Events", processor_instance=processor_instance
             )
-            outputs.append(output)
 
-            if output_path is not None:
-                head, tail = os.path.split(output_path)
-                split_output = os.path.join(head, "separate_output")
-                os.makedirs(split_output, exist_ok=True)
-                coffea.util.save(output, os.path.join(split_output, f"{sample}_{tail}"))
+            coffea.util.save(output, file_path)
 
         # accumulate separate files
-        output = accumulate(outputs)
+        # if all are skipped output_files list is empty!
+        print("Done Processing. Merging coffea files...")
+        merge_outputs(
+            inputfiles=output_files,
+            outputfile=output_path,
+            max_mem_gb=20.0,
+            verbose=True,
+        )
+
+        return coffea.util.load(output_path)
 
     else:
         fileset = config.filesets
@@ -428,10 +440,10 @@ def process_datasets(
         print(f"Working on samples: {list(fileset.keys())}")
         output = run(fileset, treename="Events", processor_instance=processor_instance)
 
-    if output_path is not None:
-        coffea.util.save(output, output_path)
-    else:
-        return output
+        if output_path is not None:
+            coffea.util.save(output, output_path)
+        else:
+            return output
 
 
 def load_plotting_style(params_file: FileName, custom_plot_style: FileName = None):

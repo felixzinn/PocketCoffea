@@ -429,7 +429,14 @@ class HistManager:
                             )
                         # General collections
                         if ax.pos == None:
-                            data = events[ax.coll][ax.field]
+                            if ax.field in events[ax.coll].fields:
+                                data = events[ax.coll][ax.field]
+                            elif hasattr(events[ax.coll], ax.field):
+                                data = getattr(events[ax.coll], ax.field)
+                            else:
+                                raise KeyError(
+                                    f"Field {ax.field} not found in collection {ax.coll}"
+                                )
                         elif ax.pos >= 0:
                             data = ak.pad_none(
                                 events[ax.coll][ax.field], ax.pos + 1, axis=1

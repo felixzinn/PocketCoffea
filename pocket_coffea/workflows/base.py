@@ -913,6 +913,7 @@ class BaseProcessorABC(processor.ProcessorABC, ABC):
                     
                 if rescale and dataset in sumgenw_dict:
                     scaling = 1 / sumgenw_dict[dataset]
+                    # NOTE: seems to cause issue if nominal not passing, key missing
                     for sample in dataset_data.keys():
                         dataset_data[sample]["nominal"] *= scaling
 

@@ -214,7 +214,7 @@ class PlotManager:
                 if self.toplabel:
                     toplabel_to_use = self.toplabel
                 else:
-                    toplabel_to_use = f"$\mathcal{{L}}$ = {style_cfg.plot_upper_label.by_year[year]:.2f}/fb"
+                    toplabel_to_use = f"$\mathcal{{L}}$ = {style_cfg.plot_upper_label.by_year[year]:.2f}/fb (13.6 TeV)"
 
                 self.shape_objects[name] = Shape(
                     h_dict,
@@ -283,10 +283,16 @@ class PlotManager:
     def plot_datamc_all(self, ratio=True, syst=True,  spliteras=False, format="png"):
         '''Plots all the histograms contained in the dictionary, for all years and categories.'''
         shape_names = list(self.shape_objects.keys())
+        from tqdm import tqdm
         if self.workers > 1:
             with Pool(processes=self.workers) as pool:
                 # Parallel calls of plot_datamc() on different shape objects
-                pool.map(partial(self.plot_datamc, ratio=ratio, syst=syst, spliteras=spliteras, format=format), shape_names)
+                list(
+                    tqdm(
+                        pool.imap(partial(self.plot_datamc, ratio=ratio, syst=syst, spliteras=spliteras, format=format), shape_names),
+                        total=len(shape_names)
+                    )
+                )
                 pool.close()
         else:
             for shape in shape_names:

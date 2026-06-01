@@ -105,7 +105,7 @@ class ColumnsManager:
                     if data.ndim > 1 and outarray.flatten:
                         if outarray.fill_none:
                             out = ak.fill_none(
-                                ak.flatten(data[col]),
+                                ak.flatten(getattr(data, col)),
                                 outarray.fill_value,
                             )
                         else:
@@ -113,7 +113,7 @@ class ColumnsManager:
                     else:
                         if outarray.fill_none:
                             out = ak.fill_none(
-                                data[col],
+                                getattr(data, col),
                                 outarray.fill_value,
                             )
                         else:
