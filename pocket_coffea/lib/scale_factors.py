@@ -1,6 +1,7 @@
 import numpy as np
 import awkward as ak
 import correctionlib
+from pocket_coffea.lib.correction_cache import load_correction_set
 
 
 def get_pho_sf(params, year, pt, eta, counts, key=''):
@@ -11,7 +12,7 @@ def get_pho_sf(params, year, pt, eta, counts, key=''):
     # translate the `year` key into the corresponding key in the correction file provided by the EGM-POG
     year_pog = photonSF["era_mapping"][year]
 
-    photon_correctionset = correctionlib.CorrectionSet.from_file(
+    photon_correctionset = load_correction_set(
         photonSF.JSONfiles[year]['file']
     )        
 
@@ -90,7 +91,7 @@ def get_ele_sf(
     year_pog = electronSF["era_mapping"][year][key]
 
     if key in ['reco', 'id']:
-        electron_correctionset = correctionlib.CorrectionSet.from_file(
+        electron_correctionset = load_correction_set(
             electronSF.JSONfiles[year]["files"][key]
         )
         map_name = electronSF.JSONfiles[year]["name"]
@@ -163,10 +164,14 @@ def sf_ele_trigger(params, events, year):
         ak.num(ele_pt),
     )
 
-    electron_correctionset = correctionlib.CorrectionSet.from_file(
+    electron_correctionset = load_correction_set(
         electronSF.trigger_sf[year].file
     )
     corr_eval = electron_correctionset[map_name].evaluate
+
+    # Clip pt to the minimum allowed range for the trigger SF maps.
+    # The EGM-POG electron trigger SF maps (e.g. HLT_SF_Ele30) have a minimum pt bound of 25.0 GeV.
+    ele_pt_flat = np.clip(ele_pt_flat, 25.0, 9999.0)
 
     # get sf, sfup, sfdown per electron
     scale_factors = [
@@ -187,7 +192,7 @@ def get_mu_sf(params, year, pt, eta, counts, key=''):
     '''
     muonSF = params["lepton_scale_factors"]["muon_sf"]
 
-    muon_correctionset = correctionlib.CorrectionSet.from_file(
+    muon_correctionset = load_correction_set(
         muonSF.JSONfiles[year]['file']
     )
 
@@ -196,7 +201,7 @@ def get_mu_sf(params, year, pt, eta, counts, key=''):
     
     sfName = muonSF.sf_name[year][key]
 
-    if year in ["2023_preBPix", "2023_postBPix", "2024"]:
+    if year in ["2023_preBPix", "2023_postBPix", "2024", "2025","2026"]:
         # Starting from 2023 SFs require non-abs value of eta:
         eta = eta.to_numpy()
     else:
@@ -235,7 +240,7 @@ def sf_ele_reco(params, events, year):
     if year in ['2016_PreVFP', '2016_PostVFP','2017','2018']:
         pt_ranges += [("pt_lt_20", (ele_pt < 20)), 
                       ("pt_gt_20", (ele_pt >= 20))]
-    elif year in ["2022_preEE", "2022_postEE", "2023_preBPix", "2023_postBPix", "2024"]:
+    elif year in ["2022_preEE", "2022_postEE", "2023_preBPix", "2023_postBPix", "2024", "2025","2026"]:
         pt_ranges += [("pt_lt_20", (ele_pt < 20)), 
                       ("pt_gt_20_lt_75", (ele_pt >= 20) & (ele_pt < 75)), 
                       ("pt_gt_75", (ele_pt >= 75))]
@@ -319,11 +324,85 @@ def sf_mu(params, events, year, key=''):
         ak.flatten(mu_eta),
         ak.num(mu_pt),
     )
+
+    # Clip pt to the minimum allowed range for the trigger SF maps.
+    # The MUO-POG muon trigger SF maps (e.g. NUM_IsoMu24) have a minimum pt bound of 26.0 GeV.
+    if key == 'trigger':
+        mu_pt_flat = np.clip(mu_pt_flat, 26.0, 9999.0)
+
     sf, sfup, sfdown = get_mu_sf(params, year, mu_pt_flat, mu_eta_flat, mu_counts, key)
 
     # The SF arrays corresponding to all the muons are multiplied along the
     # muon axis in order to obtain a per-event scale factor.
     return ak.prod(sf, axis=1), ak.prod(sfup, axis=1), ak.prod(sfdown, axis=1)
+
+
+def sf_ele_promptmva(params, events, year, key=''):
+    '''
+    This function computes the per-electron promptMVA id SF and returns the corresponding per-event SF, obtained by multiplying the per-electron SF in each event.
+    Additionally, also the up and down variations of the SF are returned.
+    '''
+    coll = params.lepton_scale_factors.electron_sf.collection
+    ele_pt = events[coll].pt
+    ele_eta = events[coll].eta
+
+    # Since `correctionlib` does not support jagged arrays as an input, the pt and eta arrays are flattened.
+    ele_pt_flat, ele_eta_flat, ele_counts = (
+        ak.to_numpy(ak.flatten(ele_pt)),
+        ak.to_numpy(ak.flatten(ele_eta)),
+        ak.num(ele_pt),
+    )
+
+    # in 2022 and 2023 the promptMVA SFs are provided by the ttH multilepton team, 
+    # in 2024 they are provided by the central POG
+    if year in ["2022_preEE", "2022_postEE", "2023_preBPix", "2023_postBPix"]:
+        # The SFs provided by the ttH multilepton team 
+        electron_correctionset = load_correction_set(
+        params.lepton_scale_factors.electron_sf.promptMVA_jsons[year]['file'])
+        # Need to put max pt to 500 for these custom SF
+        sf = electron_correctionset["NUM_TightmvaTTH_DEN_LooseElectrons"].evaluate(
+            np.abs(ele_eta_flat), 
+            np.clip(ele_pt_flat, 0. ,499.99), 
+            "nominal")
+        sfup = electron_correctionset["NUM_TightmvaTTH_DEN_LooseElectrons"].evaluate(
+            np.abs(ele_eta_flat), 
+            np.clip(ele_pt_flat, 0, 499.99), 
+            "systup")
+        sfdown = electron_correctionset["NUM_TightmvaTTH_DEN_LooseElectrons"].evaluate(
+            np.abs(ele_eta_flat), 
+            np.clip(ele_pt_flat, 0., 499.99), 
+            "systdown")
+
+    elif year == "2024":
+        # The SFs provided by the central POG are split in tightID SF
+        # and num_promptMVA_denum_tightID SF --> we need to combine them
+        corr_params = params.lepton_scale_factors.electron_sf.promptMVA_jsons[year]
+        corrkey = corr_params.key
+        electron_correctionset = load_correction_set(corr_params['file'])
+        sf, sfup, sfdown = [],[],[]
+        year_pog = params.lepton_scale_factors.electron_sf.era_mapping[year]["id"]
+    
+        sf = electron_correctionset[corrkey].evaluate(
+            year_pog, "sf", "PromptMVA-Tight", ele_eta_flat, ele_pt_flat
+        )
+        sfup = electron_correctionset[corrkey].evaluate(
+            year_pog, "sfup", "PromptMVA-Tight", ele_eta_flat, ele_pt_flat  
+        )
+        sfdown = electron_correctionset[corrkey].evaluate(
+            year_pog, "sfdown", "PromptMVA-Tight", ele_eta_flat, ele_pt_flat
+        )
+
+    else:
+        raise Exception(f"Muon promptMVA SFs for year {year} are not implemented yet")
+    
+    # Unflatten 
+    sf = ak.unflatten(sf, ele_counts)
+    sfup = ak.unflatten(sfup, ele_counts)
+    sfdown = ak.unflatten(sfdown, ele_counts)
+    # The SF arrays corresponding to all the muons are multiplied along the
+    # muon axis in order to obtain a per-event scale factor.
+    return ak.prod(sf, axis=1), ak.prod(sfup, axis=1), ak.prod(sfdown, axis=1)
+
 
 
 def sf_mu_promptmva(params, events, year, key=''):
@@ -346,30 +425,27 @@ def sf_mu_promptmva(params, events, year, key=''):
     # in 2024 they are provided by the central POG
     if year in ["2022_preEE", "2022_postEE", "2023_preBPix", "2023_postBPix"]:
         # The SFs provided by the ttH multilepton team 
-        muon_correctionset = correctionlib.CorrectionSet.from_file(
-        params.lepton_scale_factors.muon_sf.promptmva_jsons[year]['file'])
+        muon_correctionset = load_correction_set(
+        params.lepton_scale_factors.muon_sf.promptMVA_jsons[year]['file'])
         # Need to put max pt to 500 for these custom SF
-        sf = muon_correctionset["mu_allflavor"].evaluate(
+        sf = muon_correctionset["NUM_TightmvaTTH_DEN_LooseMuons"].evaluate(
             np.abs(mu_eta_flat), 
             np.clip(mu_pt_flat, 0. ,499.99), 
-            "", 
-            np.ones(mu_pt_flat.shape)*13)
-        sfup = muon_correctionset["mu_allflavor"].evaluate(
+            "nominal")
+        sfup = muon_correctionset["NUM_TightmvaTTH_DEN_LooseMuons"].evaluate(
             np.abs(mu_eta_flat), 
             np.clip(mu_pt_flat, 0, 499.99), 
-            "_muup", 
-            np.ones(mu_pt_flat.shape)*13)
-        sfdown = muon_correctionset["mu_allflavor"].evaluate(
+            "systup")
+        sfdown = muon_correctionset["NUM_TightmvaTTH_DEN_LooseMuons"].evaluate(
             np.abs(mu_eta_flat), 
             np.clip(mu_pt_flat, 0., 499.99), 
-            "_mudn", 
-            np.ones(mu_pt_flat.shape)*13)
+            "systdown")
 
     elif year == "2024":
         # The SFs provided by the central POG are split in tightID SF
         # and num_promptMVA_denum_tightID SF --> we need to combine them
-        corr_params = params.lepton_scale_factors.muon_sf.promptmva_jsons[year]
-        muon_correctionset = correctionlib.CorrectionSet.from_file(corr_params['file'])
+        corr_params = params.lepton_scale_factors.muon_sf.promptMVA_jsons[year]
+        muon_correctionset = load_correction_set(corr_params['file'])
         sfmaps = [muon_correctionset[key] for key in corr_params["keys"]]
         sf, sfup, sfdown = [],[],[]
         for sfmap in sfmaps:
@@ -410,7 +486,7 @@ def sf_btag(params, jets, year, njets, variations=["central"]):
     '''
     btagSF = params.jet_scale_factors.btagSF[year]
     btag_discriminator = params.btagging.working_point[year]["btagging_algorithm"]
-    cset = correctionlib.CorrectionSet.from_file(btagSF.file)
+    cset = load_correction_set(btagSF.file)
     corr = cset[btagSF.name]
 
     flavour = ak.to_numpy(ak.flatten(jets.hadronFlavour))
@@ -481,7 +557,7 @@ def sf_btag(params, jets, year, njets, variations=["central"]):
 def sf_btag_calib(params, sample, year, njets, jetsHt):
     '''Correction to btagSF computing by comparing the inclusive shape without btagSF and with btagSF in 2D:
     njets-JetsHT bins. Each sample/year has a different correction stored in the correctionlib format.'''
-    cset = correctionlib.CorrectionSet.from_file(
+    cset = load_correction_set(
         params.btagSF_calibration[year]["file"]
     )
     corr = cset[params.btagSF_calibration[year]["name"]]
@@ -503,7 +579,7 @@ def sf_ctag(params, jets, year, njets, variations=["central"]):
 
     ctagSF = params.jet_scale_factors.ctagSF[year]
     ctagger = params.ctagging.working_point[year]["tagger"]
-    cset = correctionlib.CorrectionSet.from_file(ctagSF.SF_file)
+    cset = load_correction_set(ctagSF.SF_file)
 
     #print(list(cset.keys()))
     #print(list(cset.items()))
@@ -551,7 +627,7 @@ def sf_ctag_calib(params, dataset, year, njets, jetsHt):
     which was  derived for V+2J phase space. It may not be suitable for other analyses.
     '''
     ctagSF = params.jet_scale_factors.ctagSF[year]
-    cset = correctionlib.CorrectionSet.from_file(ctagSF.Calib_file)
+    cset = load_correction_set(ctagSF.Calib_file)
 
     corr = cset["ctagSF_norm_correction"]
     w = corr.evaluate(dataset, ak.to_numpy(njets), ak.to_numpy(jetsHt))
@@ -572,7 +648,7 @@ def sf_jet_puId(params, jets, year, njets):
     genJetId_mask = ak.flatten(jets.genJetIdx >= 0)
 
     # GenGet matching by index, needs some checkes
-    cset = correctionlib.CorrectionSet.from_file(
+    cset = load_correction_set(
         params.jet_scale_factors.jet_puId[year]["file"]
     )
     corr = cset[params.jet_scale_factors.jet_puId[year]["name"]]
@@ -613,7 +689,7 @@ def sf_pileup_reweight(params, events, year):
     puFile = params.pileupJSONfiles[year]['file']
     puName = params.pileupJSONfiles[year]['name']
 
-    puWeightsJSON = correctionlib.CorrectionSet.from_file(puFile)
+    puWeightsJSON = load_correction_set(puFile)
 
     nPu = events.Pileup.nTrueInt.to_numpy()
     sf = puWeightsJSON[puName].evaluate(nPu, 'nominal')

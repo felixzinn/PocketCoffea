@@ -7,7 +7,7 @@ from rich.console import Console
 from rich.progress import Progress
 import cloudpickle
 import yaml
-from pocket_coffea.utils.filter_output import compare_dict_types
+from pocket_coffea.utils.filter_output import compare_dict_types, get_datasets_in_output, remove_datasets_from_output
 from pocket_coffea.utils.skim import save_skimed_dataset_definition
 from itertools import islice
 from functools import reduce
@@ -104,8 +104,14 @@ def append_configs(c1, c2):
             
     return c1
 
-def merge_outputs(inputfiles, outputfile, jobs_config=None, force=False, N_reduction=5, max_mem_gb=None, cache_dir=None, verbose=False, skip_check=False, mark_failed=False, configurator=None):
+def merge_outputs(inputfiles, outputfile, jobs_config=None, force=False, replace=False, N_reduction=5, max_mem_gb=None, cache_dir=None, verbose=False, skip_check=False, mark_failed=False, configurator=None, skip_initial_events_check_datasets=None):
     '''Merge coffea output files'''
+    # Initialised so the "no inputs and no -jc" branch below can test it without
+    # NameError (it is only assigned when a jobs_config is provided).
+    job_config = None
+    if replace and len(inputfiles) == 0:
+        print("[red]--replace only works when merging explicit input files (not with -jc).[/]")
+        exit(1)
     if jobs_config is not None:
         # check if the user provided the config file or the directory
         if not os.path.isfile(jobs_config):
@@ -153,21 +159,48 @@ def merge_outputs(inputfiles, outputfile, jobs_config=None, force=False, N_reduc
             print(f"Found {ninput} output files.")
 
         type_mismatches = []
-        f0 = inputfiles[0]
+        # Load the reference file once instead of re-deserializing it for every
+        # comparison (it was reloaded N-1 times, doubling I/O on large campaigns).
+        d0 = load(inputfiles[0])
         for f in inputfiles[1:]:
-            type_mismatch_found = compare_dict_types(load(f0), load(f))
+            type_mismatch_found = compare_dict_types(d0, load(f))
             type_mismatches.append(type_mismatch_found)
         if any(type_mismatches):
             print("[red]Type mismatch found between the values of the input dictionaries for the following files:")
-            for i, f in enumerate(inputfiles):
-                if type_mismatches[i]:
+            # type_mismatches has one entry per file compared against the reference,
+            # i.e. it lines up with inputfiles[1:], not the full inputfiles list
+            # (indexing the full list raised IndexError).
+            for f, mism in zip(inputfiles[1:], type_mismatches):
+                if mism:
                     print(f"    {f}")
             raise TypeError("Type mismatch found between the values of the input dictionaries. Please check the input files.")
         
         if cache_dir is None:
-            cache_dir = '/'.join(outputfile.split("/")[:-1])+"/merge_cache"
-        total_out =  merge_group_reduction(inputfiles, N_reduction=N_reduction, cachedir=cache_dir, 
-                                           max_mem_gb=max_mem_gb, verbose=verbose)
+            cache_dir = os.path.join(os.path.dirname(os.path.abspath(outputfile)), "merge_cache")
+
+        if replace:
+            if ninput < 2:
+                print("[red]--replace needs a base file plus at least one incoming file.[/]")
+                exit(1)
+            base_file, incoming_files = inputfiles[0], list(inputfiles[1:])
+            print(f"[blue]--replace: '{base_file}' is the base; {len(incoming_files)} "
+                  f"incoming file(s) will replace overlapping datasets.[/]")
+            incoming_out = merge_group_reduction(incoming_files, N_reduction=N_reduction, cachedir=cache_dir,
+                                                 max_mem_gb=max_mem_gb, verbose=verbose)
+            datasets_to_replace = get_datasets_in_output(incoming_out)
+            base_out = load(base_file)
+            base_datasets = get_datasets_in_output(base_out)
+            replaced = sorted(datasets_to_replace & base_datasets)
+            added    = sorted(datasets_to_replace - base_datasets)
+            print(f"Replacing {len(replaced)} dataset(s) already in base: {replaced}")
+            if added:
+                print(f"[yellow]{len(added)} incoming dataset(s) not in base (added): {added}[/]")
+            remove_datasets_from_output(base_out, datasets_to_replace)
+            total_out = accumulate([base_out, incoming_out])
+            del base_out, incoming_out
+        else:
+            total_out =  merge_group_reduction(inputfiles, N_reduction=N_reduction, cachedir=cache_dir,
+                                               max_mem_gb=max_mem_gb, verbose=verbose)
 
         if configurator is not None:
             configurators = configurator.split(",")
@@ -290,7 +323,7 @@ def merge_outputs(inputfiles, outputfile, jobs_config=None, force=False, N_reduc
 
             print(f"Merging output...")
             if cache_dir is None:
-                cache_dir = os.path.join(job_config['output_dir'],"merge_cache")
+                cache_dir = os.path.join(os.path.abspath(job_config['output_dir']), "merge_cache")
             if suff:
                 cache_dir += f"_{suff}"
             total_output = merge_group_reduction(this_output_files, N_reduction=N_reduction, cachedir=cache_dir, max_mem_gb=max_mem_gb, verbose=verbose)
@@ -304,7 +337,8 @@ def merge_outputs(inputfiles, outputfile, jobs_config=None, force=False, N_reduc
             # In case of skimming jobs save the dataset definition (like in runner)
             if configurator.save_skimmed_files:
                 print(f"[blue]Saving skimmed dataset definition[/]")
-                save_skimed_dataset_definition(total_output, f"{job_config['output_dir']}/skimmed_dataset_definition.json")
+                save_skimed_dataset_definition(total_output, f"{job_config['output_dir']}/skimmed_dataset_definition.json",
+                                               skip_initial_events_check_datasets=skip_initial_events_check_datasets)
 
             # Save the output            
             print(f"[green]Saving output to {thisoutputfile}...[/]")
@@ -383,6 +417,14 @@ def merge_outputs(inputfiles, outputfile, jobs_config=None, force=False, N_reduc
 )
 
 @click.option(
+    "--replace",
+    is_flag=True,
+    help="Treat the FIRST input file as a base: remove from it every dataset that "
+         "also appears in the remaining input files, so the later files replace "
+         "(instead of sum with) the base content. Use raw (un-postprocessed) outputs.",
+)
+
+@click.option(
     "-s",
     "--skip-check",
     is_flag=True,
@@ -395,9 +437,18 @@ def merge_outputs(inputfiles, outputfile, jobs_config=None, force=False, N_reduc
     help="Mark condor@lxplus job status as failed",
 )
 
-def main(inputfiles, outputfile, jobs_config, force, reduction, max_mem_gb, cache_dir, verbose, skip_check, mark_failed, configurator):
+@click.option(
+    "--skip-initial-events-check",
+    "skip_initial_events_check_datasets",
+    multiple=True,
+    help="Dataset name(s) for which a mismatch between the initial events in the "
+         "metadata and the cutflow is tolerated (warning instead of error). Useful "
+         "when a corrupted input file had to be skipped. Repeatable.",
+)
+
+def main(inputfiles, outputfile, jobs_config, force, replace, reduction, max_mem_gb, cache_dir, verbose, skip_check, mark_failed, configurator, skip_initial_events_check_datasets):
     '''Merge coffea output files'''
-    merge_outputs(inputfiles, outputfile, jobs_config, force, reduction, max_mem_gb, cache_dir, verbose, skip_check, mark_failed, configurator)
+    merge_outputs(inputfiles, outputfile, jobs_config, force, replace, reduction, max_mem_gb, cache_dir, verbose, skip_check, mark_failed, configurator, list(skip_initial_events_check_datasets))
 
 if __name__ == "__main__":
     main()
