@@ -222,7 +222,9 @@ class Datacard:
         if self.has_data:
             return self.data_obs.sum()["value"]
         else:
-            return -1
+            raise AttributeError(
+                "No data processes defined, cannot compute observation."
+            )
 
     def rate(self, process: str, systematic="nominal") -> float:
         """Rate of a process in the datacard.
@@ -764,8 +766,9 @@ class Datacard:
         content += self.shape_section(shapes_name=shapes_filename)
         content += self.sectionsep + self.linesep
 
-        content += self.observation_section()
-        content += self.sectionsep + self.linesep
+        if self.has_data:
+            content += self.observation_section()
+            content += self.sectionsep + self.linesep
 
         content += self.expectation_section()
         content += self.sectionsep + self.linesep
