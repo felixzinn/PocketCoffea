@@ -167,3 +167,6 @@ output*
 plots*
 .pkl.gz
 myenv/
+
+# vscode settings
+.vscode
