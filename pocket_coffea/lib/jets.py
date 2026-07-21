@@ -19,10 +19,10 @@ def get_rho(events, nano_version):
 
 def add_jec_variables(jets, event_rho, isMC=True):
     # Check if pt is defined, if not take the rawPt
-    if "pt" not in jets.fields:
+    if "pt" not in jets.fields or "rawFactor" not in jets.fields:
         jets["pt"] = jets.rawPt
         jets["pt_raw"] = jets.rawPt
-        if "rawMass" in jets.fields:    
+        if "rawMass" in jets.fields:
             jets["mass_raw"] = jets.rawMass
         else:
             # NanoAODv12 does not have rawMass for corrT1METjet
@@ -37,6 +37,7 @@ def add_jec_variables(jets, event_rho, isMC=True):
         except AttributeError:
             jets["pt_gen"] = ak.zeros_like(jets.pt, dtype=np.float32)
     return jets
+
 
 def add_jec_variables_subjet(jets, event_rho, isMC=True):
     jets["pt_raw"] = (1 - jets.rawFactor) * jets.pt
