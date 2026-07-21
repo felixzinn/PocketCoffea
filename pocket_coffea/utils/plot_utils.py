@@ -1036,10 +1036,11 @@ class Shape:
                     ax=self.ax,
                 )
         if self.toplabel:
-            hep.cms.lumitext(
+            hep.label.add_text(
                 text=self.toplabel,
                 fontsize=self.style.fontsize,
                 ax=self.ax,
+                loc="over right"
             )
         return self.fig, axes
 
@@ -1800,10 +1801,11 @@ class SystUnc:
             ax=self.ax,
         )
         if toplabel:
-            hep.cms.lumitext(
+            hep.label.add_text(
                 text=toplabel,
                 fontsize=self.style.fontsize,
                 ax=self.ax,
+                loc="over right"
             )
         return self.fig, axes
 

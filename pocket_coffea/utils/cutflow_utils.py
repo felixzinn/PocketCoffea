@@ -288,7 +288,7 @@ def plot_sample_cutflow(sample: str, sample_data: Dict, year: str, categories: L
         # Add luminosity text in top right if year is available
         if year:
             lumi_text = get_luminosity_text(year)
-            hep.cms.lumitext(text=lumi_text, ax=ax_main, fontsize=title_fontsize)
+            hep.label.add_text(text=lumi_text, ax=ax_main, fontsize=title_fontsize)
         
         # Format the scientific notation offset text after all plotting is done
         if not log_y:
