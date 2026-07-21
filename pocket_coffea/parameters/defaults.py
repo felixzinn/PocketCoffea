@@ -29,14 +29,12 @@ def setup_cvmfs_resolver(group_tags: dict = None):
     If group_tags is None the latest version is used. Otherwise a dictionary with the group names
     and the corresponding tags for each period must be provided.
     """
-    basepath = Path("/cvmfs/cms-griddata.cern.ch/cat/metadata/")
-    valid_groups = [ n.name for n in basepath.iterdir() if n.is_dir()]
-    # All the groups must share the same valid periods
-    valid_periods = {}
-    for group in valid_groups:
-        valid_periods_group = [ n.name for n in (basepath/group).iterdir() if n.is_dir()]
-        valid_periods[group] = valid_periods_group
-
+    # basepath = Path("/cvmfs/cms-griddata.cern.ch/cat/metadata/")
+    # valid_groups = [ n.name for n in basepath.iterdir() if n.is_dir()]
+    # pogpath = Path("/cvmfs/cms-griddata.cern.ch/cat/metadata/EGM")
+    # # All the groups must share the same valid periods
+    # valid_periods = [ n.name for n in pogpath.iterdir() if n.is_dir()]
+    
     # Register the resolver
     def cvmfs_path_resolver(period: str, group: str, file: str, tag=None) -> str:
         '''
@@ -53,10 +51,11 @@ def setup_cvmfs_resolver(group_tags: dict = None):
             ...
         }
         '''
-        if group not in valid_groups:
-            raise ValueError(f"Invalid group '{group}' for period '{period}' file '{file}'. Valid groups are: {valid_groups}")
-        if period not in valid_periods[group]:
-            raise ValueError(f"Invalid period '{period}' for group '{group}'  file '{file}'. Valid periods are: {valid_periods[group]}")
+        # if group not in valid_groups:
+        #     raise ValueError(f"Invalid group '{group}' for period '{period}' file '{file}'. Valid groups are: {valid_groups}")
+        # if period not in valid_periods:
+        #     raise ValueError(f"Invalid period '{period}' for group '{group}' file '{file}'. Valid periods are: {valid_periods}")
+        
         if tag is not None:
             tag = tag
         elif group_tags is not None and group in group_tags and period in group_tags[group]:
@@ -66,8 +65,8 @@ def setup_cvmfs_resolver(group_tags: dict = None):
        
         filepath = f"/cvmfs/cms-griddata.cern.ch/cat/metadata/{group}/{period}/{tag}/{file}"
         # Check if the file exists
-        if not os.path.exists(filepath):
-            raise FileNotFoundError(f"File '{filepath}' not found on CVMFS.")
+        # if not os.path.exists(filepath):
+        #     raise FileNotFoundError(f"File '{filepath}' not found on CVMFS.")
         return filepath
     
     # Register the resolver with OmegaConf
