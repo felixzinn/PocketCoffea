@@ -21,8 +21,8 @@ class DaskExecutorFactory(ExecutorFactoryABC):
     def get_worker_env(self):
         worker_env = [
             f"export X509_USER_PROXY={self.x509_path}",
-            "ulimit -s hard",
-            "ulimit -f hard",
+            "ulimit -s unlimited",
+            "ulimit -f unlimited",
         ]
 
         # add custon setup commands from user
