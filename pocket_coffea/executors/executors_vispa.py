@@ -97,10 +97,10 @@ class DaskExecutorFactory(ExecutorFactoryABC):
         logger.info(f"dask dashboard at: {self.client.dashboard_link}")
 
         # TODO: scale efficiently
-        # self.cluster.adapt(
-        #     minimum_jobs=1, maximum_jobs=self.run_options.get("scaleout", 10)
-        # )
-        self.cluster.scale(self.run_options.get("scaleout", 10))
+        self.cluster.adapt(
+            minimum_jobs=1, maximum_jobs=self.run_options.get("scaleout", 10)
+        )
+        # self.cluster.scale(self.run_options.get("scaleout", 10))
 
         logger.info("Waiting for workers to be available...")
         self.client.wait_for_workers(1)
