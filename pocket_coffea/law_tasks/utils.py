@@ -359,7 +359,7 @@ def get_executor(executor: str, run_options: dict, output_dir: FileName):
             f"Executor factory is not of type {executors_base.ExecutorFactoryABC}"
         )
 
-    return executor_factory.get()
+    return executor_factory, executor_factory.get()
 
 
 def process_datasets(
